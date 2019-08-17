@@ -2,10 +2,31 @@ import argparse
 
 import cv2
 import zmq
+import threading
 
 from camera.Camera import Camera
 from constants import PORT, SERVER_ADDRESS
 from utils import image_to_string
+
+buffer = []
+
+
+def rescale_frame(frame, percent=75):
+    width = int(frame.shape[1] * percent / 100)
+    height = int(frame.shape[0] * percent / 100)
+    dim = (width, height)
+    return cv2.resize(frame, dim, interpolation=cv2.INTER_AREA)
+
+
+def frame_capture():
+    global buffer
+    camera = Camera()
+    camera.start_capture()
+    while True:
+        frame = camera.current_frame.read()  # grab the current frame
+        frame = rescale_frame(frame)
+        buffer.append(image_to_string(frame))
+        print(len(buffer))
 
 
 class Streamer:
@@ -31,15 +52,13 @@ class Streamer:
         :return: None
         """
         print("Streaming Started...")
-        camera = Camera()
-        camera.start_capture()
+        global buffer
         self.keep_running = True
 
         while self.footage_socket and self.keep_running:
             try:
-                frame = camera.current_frame.read()  # grab the current frame
-                image_as_string = image_to_string(frame)
-                self.footage_socket.send(image_as_string)
+                if len(buffer) >= 30:
+                    self.footage_socket.send(buffer.pop())
 
             except KeyboardInterrupt:
                 cv2.destroyAllWindows()
@@ -74,7 +93,8 @@ def main():
         port = args.port
     if args.server:
         server_address = args.server
-
+    x = threading.Thread(name='capture', target=frame_capture)
+    x.start()
     streamer = Streamer(server_address, port)
     streamer.start()
 
